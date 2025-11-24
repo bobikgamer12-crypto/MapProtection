@@ -3,12 +3,14 @@ name: .NET Build
 on:
   push:
     branches: [ main ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ main ]
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -27,3 +29,34 @@ jobs:
     - name: Test
       run: dotnet test MapProtection.sln --no-build --verbosity normal
       continue-on-error: true
+
+    - name: Publish Windows exe
+      run: dotnet publish Backend/Backend.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -o ./publish
+
+    - name: Upload exe artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Backend-win-x64
+        path: ./publish/*.exe
+
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref_name }}
+        release_name: Release ${{ github.ref_name }}
+        draft: false
+        prerelease: false
+
+    - name: Upload Release Asset
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./publish/Backend.exe
+        asset_name: Backend.exe
+        asset_content_type: application/octet-stream

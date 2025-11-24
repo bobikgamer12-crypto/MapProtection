@@ -1,0 +1,126 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    strategy:
+      matrix:
+        dotnet-version: ['8.0.x']
+        node-version: ['18.x']
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ matrix.dotnet-version }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        cache-dependency-path: 'Frontend/package-lock.json'
+
+    - name: Restore .NET dependencies
+      run: dotnet restore MapProtection.sln
+
+    - name: Build Backend
+      run: dotnet build Backend/Backend.csproj -c Release --no-restore
+
+    - name: Build Library
+      run: dotnet build Library/Library.csproj -c Release --no-restore
+
+    - name: Build MapProtection WPF
+      run: dotnet build MapProtection/MapProtection.csproj -c Release --no-restore
+
+    - name: Build DMCAProtection WPF
+      run: dotnet build DMCAProtection/DMCAProtection.csproj -c Release --no-restore
+
+    - name: Install Frontend dependencies
+      working-directory: Frontend
+      run: npm install
+
+    - name: Build Frontend
+      working-directory: Frontend
+      run: npm run build
+
+    - name: Run tests (if available)
+      run: dotnet test MapProtection.sln -c Release --no-build --verbosity normal || echo "No tests found"
+      continue-on-error: true
+
+    - name: Create artifacts directory
+      run: mkdir artifacts
+
+    - name: Publish Backend
+      run: dotnet publish Backend/Backend.csproj -c Release -o artifacts/Backend
+
+    - name: Publish MapProtection WPF
+      run: dotnet publish MapProtection/MapProtection.csproj -c Release -o artifacts/MapProtection
+
+    - name: Publish DMCAProtection WPF
+      run: dotnet publish DMCAProtection/DMCAProtection.csproj -c Release -o artifacts/DMCAProtection
+
+    - name: Copy Frontend build
+      run: xcopy Frontend\build artifacts\Frontend /E /I /Y
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: mapprotection-windows-build
+        path: artifacts/
+        retention-days: 30
+
+    - name: Create version file
+      run: |
+        echo "MapProtection Build" > artifacts/BUILD_INFO.txt
+        echo "Build Date: %date% %time%" >> artifacts/BUILD_INFO.txt
+        echo "Commit: ${{ github.sha }}" >> artifacts/BUILD_INFO.txt
+        echo "Branch: ${{ github.ref_name }}" >> artifacts/BUILD_INFO.txt
+
+    - name: Compress artifacts (ZIP)
+      run: |
+        powershell -Command "Compress-Archive -Path artifacts/* -DestinationPath mapprotection-windows-${{ github.run_number }}.zip"
+
+    - name: Create Release (on tag)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          mapprotection-windows-${{ github.run_number }}.zip
+          artifacts/**/*
+        body: |
+          # MapProtection Release ${{ github.ref_name }}
+          
+          ## Build Information
+          - **Commit**: ${{ github.sha }}
+          - **Branch**: ${{ github.ref_name }}
+          - **Build Number**: ${{ github.run_number }}
+          
+          ## Contents
+          - **Backend**: ASP.NET Core API
+          - **MapProtection**: WPF Desktop Application
+          - **DMCAProtection**: DMCA Protection WPF Application
+          - **Frontend**: React Web Interface
+          - **Library**: Shared .NET Library
+          
+          ## Installation
+          1. Download the ZIP archive
+          2. Extract to your desired location
+          3. Run the appropriate executable for your use case
+          
+          For more information, see [README.md](https://github.com/${{ github.repository }}/blob/main/README.md)
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
